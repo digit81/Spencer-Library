@@ -6,7 +6,8 @@
 #include "../Util/Base64Decode.h"
 #include "../Settings.h"
 
-#define CA "DC:03:B5:D6:0C:F1:02:F1:B1:D0:62:27:9F:3E:B4:C3:CD:C9:93:BA:20:65:6D:06:DC:5D:56:AC:CC:BA:40:20"
+// Original CircuitMess server:
+// #define CA "DC:03:B5:D6:0C:F1:02:F1:B1:D0:62:27:9F:3E:B4:C3:CD:C9:93:BA:20:65:6D:06:DC:5D:56:AC:CC:BA:40:20"
 
 const char* stash[] = {
 		"recording-1.mp3",
@@ -67,8 +68,8 @@ void TextToSpeechImpl::doJob(const TTSJob& job){
 TTSResult* TextToSpeechImpl::generateSpeech(const std::string& text, const char* filename){
 	const char pattern[] = "{ 'input': { 'text': '%.*s' },"
 						   "'voice': {"
-						   "'languageCode': 'en-US',"
-						   "'name': 'en-US-Standard-D',"
+						   "'languageCode': 'pl-PL',"
+						   "'name': 'pl-PL-darkman-medium',"
 						   "'ssmlGender': 'NEUTRAL'"
 						   "}, 'audioConfig': {"
 						   "'audioEncoding': 'MP3',"
@@ -83,7 +84,7 @@ TTSResult* TextToSpeechImpl::generateSpeech(const std::string& text, const char*
 	StreamableHTTPClient http;
 	http.useHTTP10(true);
 	http.setReuse(false);
-	if(!http.begin("https://spencer.circuitmess.com:8443/tts/v1/text:synthesize", CA)){
+	if(!http.begin("http://192.168.4.1:8080/tts/v1/text:synthesize")){
 		free(data);
 		return new TTSResult(TTSError::NETWORK);
 	}

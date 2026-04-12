@@ -319,10 +319,70 @@ def sti():
 
 ---
 
+## Raspberry Pi Offline Setup
+
+### Architecture
+
+```
+┌──────────┐   WiFi (192.168.4.x)   ┌──────────────────────┐
+│  Spencer  │ ◄────────────────────► │  Raspberry Pi 4       │
+│  (ESP32)  │                        │                        │
+│           │   USB (power only)     │  hostapd  (WiFi AP)    │
+│           │ ◄──────────────────────│  FastAPI  (server)     │
+│           │                        │  Vosk    (Polish ASR)  │
+│           │                        │  Piper   (Polish TTS)  │
+└──────────┘                         └────────────────────────┘
+```
+
+### Quick start
+
+```bash
+# On the Raspberry Pi:
+cd server/
+sudo bash setup_pi.sh
+sudo reboot
+```
+
+This automatically:
+- Creates WiFi hotspot `SpencerNet` (password: `spencer123`)
+- Downloads Vosk Polish model (~50 MB)
+- Downloads Piper TTS + Polish voice
+- Installs the server as a systemd service on port 8080
+- Pi IP: `192.168.4.1`
+
+### Spencer firmware changes (already applied)
+
+| File | Change |
+|---|---|
+| `TextToSpeech.cpp` | URL → `http://192.168.4.1:8080/tts/v1/text:synthesize`, language → `pl-PL`, CA cert removed |
+| `SpeechToIntent.cpp` | URL → `http://192.168.4.1:8080/sti/speech`, CA cert removed |
+
+### Server files
+
+| File | Purpose |
+|---|---|
+| `server/main.py` | FastAPI server with `/tts/v1/text:synthesize` and `/sti/speech` endpoints |
+| `server/requirements.txt` | Python dependencies (fastapi, uvicorn, vosk) |
+| `server/setup_pi.sh` | One-command Pi setup (hostapd, models, systemd service) |
+
+### Hardware requirements
+
+| Component | RAM | Latency (3s clip) |
+|---|---|---|
+| Vosk (small Polish model) | ~200 MB | ~500ms |
+| Piper TTS (Polish voice) | ~100 MB | ~200ms |
+| FastAPI + system | ~200 MB | - |
+| **Total** | **~500 MB** | **< 1s round trip** |
+
+Runs on Raspberry Pi 3B+ (1GB) or better. Pi 4 (2GB+) recommended.
+
+---
+
 ## Summary Table
 
 | Feature | Polish Support | Change Required | Difficulty |
 |---|---|---|---|
-| **TTS (Text-to-Speech)** | Likely possible | Client-side: change `languageCode` and `name` in `TextToSpeech.cpp` | Low |
-| **Speech Recognition (STI)** | Not possible without server changes | Server-side: add Polish ASR + NLU model | High |
+| **TTS (Text-to-Speech)** | Working | Firmware: `pl-PL` language code. Server: Piper TTS | Low |
+| **Speech Recognition (STI)** | Working | Firmware: point to Pi. Server: Vosk + keyword NLU | Medium |
+| **WiFi / Offline** | Working | Pi hotspot via hostapd, no internet needed | Low |
 | **Language Persistence** | Not implemented | Add `language` field to `SettingsData` in `Settings.h` | Low |
