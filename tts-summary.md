@@ -116,6 +116,209 @@ struct SettingsData {
 
 ---
 
+## Redirecting to Your Own Server
+
+### What to change in the client code
+
+Three modifications are needed in the Spencer firmware:
+
+#### 1. Server URLs
+
+| File | Line | Current URL |
+|---|---|---|
+| `src/Speech/TextToSpeech.cpp` | 86 | `https://spencer.circuitmess.com:8443/tts/v1/text:synthesize` |
+| `src/Speech/SpeechToIntent.cpp` | 61 | `https://spencer.circuitmess.com:8443/sti/speech` |
+
+Change both URLs to point to your server, e.g. `https://myserver.local:8443/tts/v1/text:synthesize`.
+
+#### 2. SSL Certificate Fingerprint
+
+Both files define `#define CA` with a SHA256 certificate fingerprint for TLS pinning. Replace with your server's certificate fingerprint:
+
+```cpp
+// In both TextToSpeech.cpp and SpeechToIntent.cpp
+#define CA "YOUR:SERVER:CERT:SHA256:FINGERPRINT:HERE"
+```
+
+Get your cert fingerprint with:
+```bash
+openssl x509 -in your_cert.pem -fingerprint -sha256 -noout
+```
+
+#### 3. Language code in TTS pattern
+
+In `TextToSpeech.cpp` line 70-71, change `en-US` to `pl-PL` (see section above).
+
+---
+
+## API Specification for Your Server
+
+### TTS Endpoint: `POST /tts/v1/text:synthesize`
+
+**Request:**
+```
+Content-Type: application/json; charset=utf-8
+Accept-Encoding: identity
+```
+```json
+{
+  "input": { "text": "Cześć, jak się masz?" },
+  "voice": {
+    "languageCode": "pl-PL",
+    "name": "pl-PL-Standard-A",
+    "ssmlGender": "NEUTRAL"
+  },
+  "audioConfig": {
+    "audioEncoding": "MP3",
+    "speakingRate": 0.96,
+    "pitch": 5.5,
+    "sampleRateHertz": 16000
+  }
+}
+```
+
+**Response** (HTTP 200):
+```json
+{
+  "audioContent": "<base64-encoded MP3 data>"
+}
+```
+
+**Notes:**
+- The client uses a streaming character-by-character JSON parser (NOT a full JSON library) - it scans for the `"audioContent"` key and base64-decodes the value directly to flash storage
+- Output MUST be MP3, 16 kHz
+- The request uses single-quoted JSON (non-standard) but your server should accept it
+- Keep the response simple - only the `audioContent` field is read
+
+### STI Endpoint: `POST /sti/speech`
+
+**Request:**
+```
+Content-Type: audio/wav
+Accept-Encoding: identity
+Content-Length: <size in bytes>
+Body: raw WAV file (16-bit PCM, mono, 16000 Hz, compressed)
+```
+
+**Response** (HTTP 200):
+```json
+{
+  "text": "jaka jest pogoda w Warszawie",
+  "intents": [
+    {
+      "name": "weather",
+      "confidence": 0.95
+    }
+  ],
+  "entities": {
+    "location": [
+      {
+        "name": "city",
+        "body": "Warszawa"
+      }
+    ]
+  }
+}
+```
+
+**Critical constraints:**
+- JSON buffer on ESP32 is small: `JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(50) + 200` (~450 bytes). Keep responses compact!
+- The `text` field is required (client checks `containsKey("text")`)
+- `intents` array: each entry needs `name` (string) and `confidence` (float)
+- `entities` object: each key maps to an array of objects with `name` and `body` fields
+- If no intent is detected, you can omit `intents` or return an empty array - the client will set `error = INTENT`
+
+---
+
+## Open-Source Polish Language Tools for Your Server
+
+### Speech-to-Text (ASR) - Polish Support
+
+| Tool | Polish Support | Quality | Notes |
+|---|---|---|---|
+| **OpenAI Whisper** | Excellent | High | Best option. Supports 99 languages including Polish. Models: tiny to large. Self-hostable. `pip install openai-whisper`. Use `whisper --language pl` |
+| **Vosk** | Yes | Good | Lightweight, offline. Polish model available at `vosk-model-small-pl-0.22` (~50MB) and `vosk-model-pl-0.22` (~1GB). Fast on CPU. Great for ESP32-class audio |
+| **Whisper.cpp** | Excellent | High | C++ port of Whisper. Lower resource usage than Python Whisper. Same Polish quality |
+| **wav2vec2 (HuggingFace)** | Yes | Good | `jonatasgrosman/wav2vec2-large-xlsr-53-polish` and other community models on HuggingFace |
+| **Kaldi** | Yes | Good | Polish models exist but complex setup. Better alternatives exist now |
+| **Mozilla DeepSpeech** | Limited | Fair | Community Polish models exist but project is archived. Not recommended |
+| **Coqui STT** | Limited | Fair | Fork of DeepSpeech. Some Polish community models. Project winding down |
+
+**Recommendation:** **Whisper** (or Whisper.cpp) for best Polish accuracy. **Vosk** if you need low latency and low resource usage.
+
+### Intent Recognition (NLU) - Polish Support
+
+| Tool | Polish Support | Notes |
+|---|---|---|
+| **Rasa NLU** | Language-agnostic | Best option. Train your own Polish intents. Supports spaCy Polish pipeline (`pl_core_news_sm`). Open-source, self-hostable |
+| **Snips NLU** | Language-agnostic | Lightweight. Supports custom languages including Polish. Good for IoT/embedded use cases |
+| **Padatious (Mycroft)** | Language-agnostic | Simple intent parser using example sentences. Easy to add Polish |
+| **Adapt (Mycroft)** | Language-agnostic | Keyword-based intent parser. Works with any language |
+
+**Recommendation:** **Rasa NLU** for production quality. **Snips NLU** for lightweight/simple setups.
+
+### Text-to-Speech (TTS) - Polish Support
+
+| Tool | Polish Support | Quality | Notes |
+|---|---|---|---|
+| **Piper TTS** | Excellent | High | Best option. Multiple Polish voices available. Fast, lightweight. By Rhasspy project. Output: WAV/MP3 |
+| **Coqui TTS** | Yes | High | Neural TTS. Polish models via community. `pip install TTS` |
+| **eSpeak-ng** | Yes | Low | Robotic but functional. Built-in Polish. Very lightweight |
+| **MaryTTS** | Limited | Medium | Java-based. Some Polish support via MBROLA voices |
+| **MBROLA** | Yes | Medium | Diphone synthesis. Polish voices `pl1` available |
+
+**Recommendation:** **Piper TTS** - best quality-to-resource ratio for Polish, and outputs MP3/WAV that Spencer can play directly.
+
+---
+
+## Recommended Server Stack for Polish Spencer
+
+A minimal self-hosted server combining the best tools:
+
+```
+Your Server (Python/Flask or Node.js)
+├── POST /tts/v1/text:synthesize
+│   └── Piper TTS (Polish voice) → base64 MP3 response
+│
+└── POST /sti/speech
+    ├── Whisper or Vosk (Polish ASR) → transcript
+    └── Rasa NLU or Snips NLU (Polish intents) → intent + entities
+```
+
+### Example Python server skeleton (Flask):
+
+```python
+from flask import Flask, request, jsonify
+import whisper
+import piper
+import base64
+
+app = Flask(__name__)
+
+@app.route('/tts/v1/text:synthesize', methods=['POST'])
+def tts():
+    data = request.get_json()
+    text = data['input']['text']
+    # Generate speech with Piper TTS (Polish)
+    audio_mp3 = generate_polish_speech(text)
+    return jsonify({'audioContent': base64.b64encode(audio_mp3).decode()})
+
+@app.route('/sti/speech', methods=['POST'])
+def sti():
+    wav_data = request.data
+    # Transcribe with Whisper (Polish)
+    transcript = transcribe_polish(wav_data)
+    # Detect intent with your NLU
+    intent, entities = detect_intent(transcript)
+    return jsonify({
+        'text': transcript,
+        'intents': [{'name': intent, 'confidence': 0.9}],
+        'entities': entities
+    })
+```
+
+---
+
 ## Summary Table
 
 | Feature | Polish Support | Change Required | Difficulty |
