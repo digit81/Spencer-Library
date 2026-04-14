@@ -4,8 +4,11 @@
 #include <Arduino.h>
 
 struct SettingsData {
-	char SSID[64] = {0};
-	char pass[64] = {0};
+	// DEV/LAB: default WiFi points at the Pi hotspot. Note that
+	// Spencer.cpp currently hardcodes these at the Net.set() call site
+	// as well, so these defaults only matter if you revert that change.
+	char SSID[64] = "SpencerNet";
+	char pass[64] = "spencer123";
 	bool fahrenheit = false;
 	uint8_t brightnessLevel = 1; //medium brightness
 	uint8_t volumeLevel = 1; //medium volume

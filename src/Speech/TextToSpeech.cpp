@@ -6,7 +6,8 @@
 #include "../Util/Base64Decode.h"
 #include "../Settings.h"
 
-#define CA "DC:03:B5:D6:0C:F1:02:F1:B1:D0:62:27:9F:3E:B4:C3:CD:C9:93:BA:20:65:6D:06:DC:5D:56:AC:CC:BA:40:20"
+// Original CircuitMess server:
+// #define CA "DC:03:B5:D6:0C:F1:02:F1:B1:D0:62:27:9F:3E:B4:C3:CD:C9:93:BA:20:65:6D:06:DC:5D:56:AC:CC:BA:40:20"
 
 const char* stash[] = {
 		"recording-1.mp3",
@@ -18,7 +19,8 @@ const char* stash[] = {
 const char* TTSStrings[] = { "OK", "not connected to a network", "buffer file error", "server response error", "server error", "file limit", "text limit" };
 
 #define STASH_COUNT (sizeof(stash) / sizeof(stash[0]))
-#define CHAR_LIMIT 130
+#define CHAR_LIMIT 250
+#define FLASH_SLOT_SIZE 131072  // 128 KB; at 32 kbps MP3 fits ~32s of audio
 
 TextToSpeechImpl TextToSpeech;
 
@@ -35,7 +37,7 @@ void TextToSpeechImpl::releaseRecording(const char* filename){
 }
 
 void TextToSpeechImpl::doJob(const TTSJob& job){
-	if(job.text.length() > 130){
+	if(job.text.length() > CHAR_LIMIT){
 		*job.result = new TTSResult(TTSError::TEXTLIMIT);
 		return;
 	}
@@ -67,8 +69,8 @@ void TextToSpeechImpl::doJob(const TTSJob& job){
 TTSResult* TextToSpeechImpl::generateSpeech(const std::string& text, const char* filename){
 	const char pattern[] = "{ 'input': { 'text': '%.*s' },"
 						   "'voice': {"
-						   "'languageCode': 'en-US',"
-						   "'name': 'en-US-Standard-D',"
+						   "'languageCode': 'pl-PL',"
+						   "'name': 'pl-PL-darkman-medium',"
 						   "'ssmlGender': 'NEUTRAL'"
 						   "}, 'audioConfig': {"
 						   "'audioEncoding': 'MP3',"
@@ -83,7 +85,7 @@ TTSResult* TextToSpeechImpl::generateSpeech(const std::string& text, const char*
 	StreamableHTTPClient http;
 	http.useHTTP10(true);
 	http.setReuse(false);
-	if(!http.begin("https://spencer.circuitmess.com:8443/tts/v1/text:synthesize", CA)){
+	if(!http.begin("http://192.168.4.1:8080/tts/v1/text:synthesize")){
 		free(data);
 		return new TTSResult(TTSError::NETWORK);
 	}
@@ -166,8 +168,18 @@ TTSResult* TextToSpeechImpl::generateSpeech(const std::string& text, const char*
 int TextToSpeechImpl::processStream(WiFiClient& stream, const char* filename){
 	if(filename == nullptr) return -1;
 
+	// Migration: if the slot exists but is smaller than FLASH_SLOT_SIZE
+	// (e.g. 64 KB leftover from older firmware), remove it so it can be
+	// recreated at the new size. Without this, large MP3s truncate silently.
+	if(SerialFlash.exists(filename)){
+		SerialFlashFile existing = SerialFlash.open(filename);
+		if(existing && existing.size() < FLASH_SLOT_SIZE){
+			existing.close();
+			SerialFlash.remove(filename);
+		}
+	}
 	if(!SerialFlash.exists(filename)){
-		SerialFlash.createErasable(filename, 64000);
+		SerialFlash.createErasable(filename, FLASH_SLOT_SIZE);
 	}
 
 	SerialFlashFile file = SerialFlash.open(filename);
