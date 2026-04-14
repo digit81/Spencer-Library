@@ -35,3 +35,8 @@
 cmake-build-debug
 build
 .vscode
+
+# Python (server/)
+__pycache__/
+*.pyc
+*.pyo
