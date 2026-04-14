@@ -12,6 +12,7 @@ import base64
 import io
 import json
 import os
+import re
 import subprocess
 import tempfile
 import wave
@@ -92,11 +93,23 @@ def match_intent(transcript: str):
 @app.post("/tts/v1/text:synthesize")
 async def tts_synthesize(request: Request):
     body = await request.body()
+    body_str = body.decode("utf-8", errors="replace")
 
-    # Spencer sends single-quoted JSON; convert to valid JSON
-    text_str = body.decode("utf-8").replace("'", '"')
-    data = json.loads(text_str)
-    text = data["input"]["text"]
+    # Spencer sends single-quoted pseudo-JSON with a fixed structure:
+    #   { 'input': { 'text': 'CONTENT' }, 'voice': { ... }, 'audioConfig': { ... } }
+    # A naive quote-swap breaks on apostrophes inside CONTENT. Instead,
+    # anchor on the surrounding keys, which are constants controlled by
+    # the firmware and can't appear in user text.
+    match = re.search(
+        r"'text'\s*:\s*'(.*)'\s*\}\s*,\s*'voice'",
+        body_str,
+        re.DOTALL,
+    )
+    if not match:
+        return JSONResponse(
+            {"error": "could not extract text from request"}, status_code=400
+        )
+    text = match.group(1)
 
     wav_path = None
     mp3_path = None
@@ -110,14 +123,15 @@ async def tts_synthesize(request: Request):
             input=text, capture_output=True, text=True, check=True,
         )
 
-        # 2. Convert WAV → MP3 (16 kHz mono, matching Spencer expectations)
+        # 2. Convert WAV → MP3 (16 kHz mono, 32 kbps to fit Spencer's flash slot)
+        # At 32 kbps: ~4 KB/sec, so 128 KB flash slot fits ~32 seconds of audio.
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             mp3_path = f.name
 
         subprocess.run([
             "ffmpeg", "-y", "-i", wav_path,
             "-ar", "16000", "-ac", "1",
-            "-codec:a", "libmp3lame", "-b:a", "64k",
+            "-codec:a", "libmp3lame", "-b:a", "32k",
             "-loglevel", "error",
             mp3_path,
         ], capture_output=True, check=True)

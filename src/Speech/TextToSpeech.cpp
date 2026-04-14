@@ -19,7 +19,8 @@ const char* stash[] = {
 const char* TTSStrings[] = { "OK", "not connected to a network", "buffer file error", "server response error", "server error", "file limit", "text limit" };
 
 #define STASH_COUNT (sizeof(stash) / sizeof(stash[0]))
-#define CHAR_LIMIT 130
+#define CHAR_LIMIT 250
+#define FLASH_SLOT_SIZE 131072  // 128 KB; at 32 kbps MP3 fits ~32s of audio
 
 TextToSpeechImpl TextToSpeech;
 
@@ -36,7 +37,7 @@ void TextToSpeechImpl::releaseRecording(const char* filename){
 }
 
 void TextToSpeechImpl::doJob(const TTSJob& job){
-	if(job.text.length() > 130){
+	if(job.text.length() > CHAR_LIMIT){
 		*job.result = new TTSResult(TTSError::TEXTLIMIT);
 		return;
 	}
@@ -168,7 +169,7 @@ int TextToSpeechImpl::processStream(WiFiClient& stream, const char* filename){
 	if(filename == nullptr) return -1;
 
 	if(!SerialFlash.exists(filename)){
-		SerialFlash.createErasable(filename, 64000);
+		SerialFlash.createErasable(filename, FLASH_SLOT_SIZE);
 	}
 
 	SerialFlashFile file = SerialFlash.open(filename);

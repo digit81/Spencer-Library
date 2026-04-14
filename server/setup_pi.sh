@@ -5,10 +5,11 @@
 # Run as: sudo bash setup_pi.sh
 #
 # This script:
-#   1. Installs system dependencies (ffmpeg, hostapd, dnsmasq, python3)
+#   1. Installs system dependencies (ffmpeg, python3)
 #   2. Downloads Vosk Polish model
 #   3. Downloads Piper TTS + Polish voice
-#   4. Sets up WiFi hotspot "SpencerNet"
+#   4. Sets up WiFi hotspot "SpencerNet" via NetworkManager
+#      (works on Raspberry Pi OS Bookworm and Trixie)
 #   5. Creates a systemd service for the server
 # =============================================================================
 
@@ -21,16 +22,32 @@ HOTSPOT_PASS="spencer123"
 WLAN_IFACE="wlan0"
 PI_IP="192.168.4.1"
 
+if [ "$EUID" -ne 0 ]; then
+    echo "Please run as root: sudo bash setup_pi.sh"
+    exit 1
+fi
+
 echo "=== Spencer Polish Voice Server Setup ==="
 echo ""
 
-# --- 1. System packages ---
+# --- 1. Detect network stack ---
+if ! command -v nmcli >/dev/null 2>&1; then
+    echo "ERROR: NetworkManager (nmcli) not found."
+    echo "This script targets Raspberry Pi OS Bookworm and Trixie."
+    echo "For older releases (Bullseye and earlier) you need the dhcpcd/hostapd path."
+    exit 1
+fi
+
+# --- 2. System packages ---
 echo "[1/5] Installing system packages..."
 apt-get update -qq
-apt-get install -y -qq python3 python3-pip python3-venv ffmpeg \
-    hostapd dnsmasq wget unzip
+apt-get install -y -qq python3 python3-pip python3-venv ffmpeg wget unzip
 
-# --- 2. Install directory & Python venv ---
+# Make sure hostapd/dnsmasq (if present from a previous run) don't fight NM.
+systemctl disable --now hostapd 2>/dev/null || true
+systemctl disable --now dnsmasq 2>/dev/null || true
+
+# --- 3. Install directory & Python venv ---
 echo "[2/5] Setting up install directory..."
 mkdir -p "$INSTALL_DIR"
 cp "$SCRIPT_DIR/main.py" "$INSTALL_DIR/"
@@ -39,7 +56,7 @@ cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
 python3 -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install --quiet -r "$INSTALL_DIR/requirements.txt"
 
-# --- 3. Download Vosk Polish model ---
+# --- 4. Download Vosk Polish model ---
 echo "[3/5] Downloading Vosk Polish model (~50 MB)..."
 if [ ! -d "$INSTALL_DIR/model" ]; then
     wget -q "https://alphacephei.com/vosk/models/vosk-model-small-pl-0.22.zip" \
@@ -52,7 +69,7 @@ else
     echo "    Model already exists, skipping."
 fi
 
-# --- 4. Download Piper TTS + Polish voice ---
+# --- 5. Download Piper TTS + Polish voice ---
 echo "[4/5] Downloading Piper TTS + Polish voice..."
 PIPER_DIR="$INSTALL_DIR/piper"
 if [ ! -f "$PIPER_DIR/piper" ]; then
@@ -84,58 +101,44 @@ else
     echo "    Polish voice already exists, skipping."
 fi
 
-# --- 5. WiFi Hotspot ---
-echo "[5/5] Configuring WiFi hotspot ($HOTSPOT_SSID)..."
+# --- 6. WiFi Hotspot via NetworkManager ---
+echo "[5/5] Configuring WiFi hotspot ($HOTSPOT_SSID) via NetworkManager..."
 
-# hostapd config
-cat > /etc/hostapd/hostapd.conf <<HOSTAPD_EOF
-interface=$WLAN_IFACE
-driver=nl80211
-ssid=$HOTSPOT_SSID
-hw_mode=g
-channel=7
-wmm_enabled=0
-macaddr_acl=0
-auth_algs=1
-ignore_broadcast_ssid=0
-wpa=2
-wpa_passphrase=$HOTSPOT_PASS
-wpa_key_mgmt=WPA-PSK
-wpa_pairwise=TKIP
-rsn_pairwise=CCMP
-HOSTAPD_EOF
+# Remove any prior hotspot profile with the same name, idempotently.
+nmcli connection delete SpencerHotspot 2>/dev/null || true
 
-# Point hostapd to its config
-sed -i 's|^#DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' \
-    /etc/default/hostapd 2>/dev/null || true
+# Create the AP profile. `ipv4.method shared` makes NM run an internal
+# dnsmasq for DHCP+DNS on this interface — no separate dnsmasq needed.
+nmcli connection add \
+    type wifi ifname "$WLAN_IFACE" \
+    con-name SpencerHotspot autoconnect yes \
+    ssid "$HOTSPOT_SSID"
 
-# dnsmasq config
-cat > /etc/dnsmasq.d/spencer.conf <<DNSMASQ_EOF
-interface=$WLAN_IFACE
-dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
-DNSMASQ_EOF
+nmcli connection modify SpencerHotspot \
+    802-11-wireless.mode ap \
+    802-11-wireless.band bg \
+    802-11-wireless.channel 7 \
+    ipv4.method shared \
+    ipv4.addresses "$PI_IP/24" \
+    ipv6.method disabled \
+    wifi-sec.key-mgmt wpa-psk \
+    wifi-sec.proto rsn \
+    wifi-sec.pairwise ccmp \
+    wifi-sec.group ccmp \
+    wifi-sec.psk "$HOTSPOT_PASS"
 
-# Static IP for wlan0
-if ! grep -q "spencer" /etc/dhcpcd.conf 2>/dev/null; then
-    cat >> /etc/dhcpcd.conf <<DHCP_EOF
-
-# spencer hotspot
-interface $WLAN_IFACE
-static ip_address=$PI_IP/24
-nohook wpa_supplicant
-DHCP_EOF
-fi
-
-# Enable services
-systemctl unmask hostapd 2>/dev/null || true
-systemctl enable hostapd
-systemctl enable dnsmasq
+# Bring the hotspot up now (will also auto-start on boot).
+nmcli connection up SpencerHotspot || {
+    echo "WARNING: Could not bring up hotspot immediately."
+    echo "It is saved and will try to start on next boot."
+}
 
 # --- Systemd service for the server ---
 cat > /etc/systemd/system/spencer-server.service <<SERVICE_EOF
 [Unit]
 Description=Spencer Polish Voice Server
-After=network.target
+After=network-online.target NetworkManager.service
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -153,21 +156,21 @@ SERVICE_EOF
 
 systemctl daemon-reload
 systemctl enable spencer-server
+systemctl restart spencer-server
 
 echo ""
 echo "=== Setup complete! ==="
 echo ""
 echo "WiFi hotspot:  $HOTSPOT_SSID / $HOTSPOT_PASS"
+echo "Pi address:    $PI_IP"
 echo "Server:        http://$PI_IP:8080"
 echo "TTS endpoint:  http://$PI_IP:8080/tts/v1/text:synthesize"
 echo "STI endpoint:  http://$PI_IP:8080/sti/speech"
 echo ""
-echo "To start everything now:  sudo reboot"
-echo "Or manually:"
-echo "  sudo systemctl start hostapd"
-echo "  sudo systemctl start dnsmasq"
-echo "  sudo systemctl start spencer-server"
+echo "Useful commands:"
+echo "  nmcli connection show SpencerHotspot"
+echo "  systemctl status spencer-server"
+echo "  journalctl -u spencer-server -f"
 echo ""
-echo "Spencer firmware needs these URLs:"
-echo "  TextToSpeech.cpp:  http://$PI_IP:8080/tts/v1/text:synthesize"
-echo "  SpeechToIntent.cpp: http://$PI_IP:8080/sti/speech"
+echo "Spencer firmware is already configured to connect to:"
+echo "  http://$PI_IP:8080/..."

@@ -20,8 +20,9 @@ IntentResult::IntentResult(Error error) : error(error), entities({}){
 }
 
 IntentResult::~IntentResult(){
-	delete transcript;
-	delete intent;
+	// transcript and intent are allocated with malloc(), must be freed with free().
+	free(transcript);
+	free(intent);
 }
 
 SpeechToIntentImpl::SpeechToIntentImpl() : AsyncProcessor("STI_Job"){
