@@ -40,7 +40,11 @@ void SpencerImpl::begin()
 	LoopManager::addListener(&LEDmatrix);
 	LoopManager::addListener(new InputGPIO());
 
-	Net.set(Settings.get().SSID, Settings.get().pass);
+	// DEV/LAB: hardcoded WiFi credentials for the Pi hotspot.
+	// This bypasses any stored Settings values (which could be leftover
+	// from previous firmware). Replace with Net.set(Settings.get().SSID,
+	// Settings.get().pass) if you want to use the normal provisioning flow.
+	Net.set("SpencerNet", "spencer123");
 
 	LoopManager::setStackSize(10240);
 }
