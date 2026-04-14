@@ -168,6 +168,16 @@ TTSResult* TextToSpeechImpl::generateSpeech(const std::string& text, const char*
 int TextToSpeechImpl::processStream(WiFiClient& stream, const char* filename){
 	if(filename == nullptr) return -1;
 
+	// Migration: if the slot exists but is smaller than FLASH_SLOT_SIZE
+	// (e.g. 64 KB leftover from older firmware), remove it so it can be
+	// recreated at the new size. Without this, large MP3s truncate silently.
+	if(SerialFlash.exists(filename)){
+		SerialFlashFile existing = SerialFlash.open(filename);
+		if(existing && existing.size() < FLASH_SLOT_SIZE){
+			existing.close();
+			SerialFlash.remove(filename);
+		}
+	}
 	if(!SerialFlash.exists(filename)){
 		SerialFlash.createErasable(filename, FLASH_SLOT_SIZE);
 	}

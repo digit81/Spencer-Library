@@ -357,6 +357,28 @@ This automatically:
 | `TextToSpeech.cpp` | URL → `http://192.168.4.1:8080/tts/v1/text:synthesize`, language → `pl-PL`, CA cert removed |
 | `SpeechToIntent.cpp` | URL → `http://192.168.4.1:8080/sti/speech`, CA cert removed |
 
+### IMPORTANT: WiFi provisioning (manual step)
+
+Flashing the new firmware alone does **not** move Spencer onto `SpencerNet`.
+Spencer reads its WiFi credentials from the `Settings` struct
+(`src/Settings.h`, populated via the original CircuitMess setup flow).
+Until those stored credentials point at the Pi's hotspot, Spencer will keep
+trying to connect to whatever network it was last provisioned for.
+
+Pick one of these before your first test:
+
+1. **Use the CircuitMess provisioning app (easiest).** With Spencer in
+   setup mode, reconfigure WiFi through the app to SSID `SpencerNet`,
+   password `spencer123`.
+2. **Factory reset, then reprovision.** Clear stored settings so Spencer
+   enters setup mode on next boot, then reprovision as above.
+3. **Hardcode credentials (dev only).** Pre-seed `SettingsData.SSID` /
+   `SettingsData.pass` in `Settings.h` defaults before flashing. Convenient
+   for a lab bench, not recommended for anything you ship.
+
+Symptom of skipping this step: Spencer boots, flashes the LED matrix, but
+never connects. Every TTS/STI call returns `NETWORK` error.
+
 ### Server files
 
 | File | Purpose |

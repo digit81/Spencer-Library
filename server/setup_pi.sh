@@ -128,10 +128,34 @@ nmcli connection modify SpencerHotspot \
     wifi-sec.psk "$HOTSPOT_PASS"
 
 # Bring the hotspot up now (will also auto-start on boot).
-nmcli connection up SpencerHotspot || {
-    echo "WARNING: Could not bring up hotspot immediately."
-    echo "It is saved and will try to start on next boot."
-}
+nmcli connection up SpencerHotspot || true
+
+# Verify the AP actually came up — nmcli can return 0 from `up` and still
+# fail to activate (e.g. chipset doesn't support AP mode, wlan0 busy).
+# Give NM a moment to settle, then confirm the profile is 'activated'.
+ap_up=0
+for i in 1 2 3 4 5; do
+    if nmcli -t -f GENERAL.STATE con show SpencerHotspot 2>/dev/null | grep -q activated; then
+        ap_up=1
+        break
+    fi
+    sleep 1
+done
+
+if [ "$ap_up" -ne 1 ]; then
+    echo ""
+    echo "ERROR: Hotspot SpencerHotspot did not activate."
+    echo "Common causes:"
+    echo "  - wlan0 is managed by another service (wpa_supplicant, rfkill)"
+    echo "  - WiFi chipset does not support AP mode on this kernel"
+    echo "  - Another NM profile is holding the interface"
+    echo ""
+    echo "Diagnose with:"
+    echo "  nmcli device status"
+    echo "  nmcli -f all con show SpencerHotspot"
+    echo "  journalctl -u NetworkManager --since '2 minutes ago'"
+    exit 1
+fi
 
 # --- Systemd service for the server ---
 cat > /etc/systemd/system/spencer-server.service <<SERVICE_EOF
